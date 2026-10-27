@@ -70,6 +70,8 @@ pre.out{margin:0;max-height:460px;overflow:auto;white-space:pre-wrap;word-break:
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/turndown@7.1.2/dist/turndown.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/turndown-plugin-gfm@1.0.2/dist/turndown-plugin-gfm.js"></script>
 <script>
 const { useState, useRef, useEffect } = React;
 const html = htm.bind(React.createElement);
@@ -97,6 +99,49 @@ DOCUMENTO:
 
 const SVG="<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 320' preserveAspectRatio='xMidYMax slice'><defs><linearGradient id='s' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#1b1140'/><stop offset='.55' stop-color='#a23b5c'/><stop offset='.85' stop-color='#f59e4b'/><stop offset='1' stop-color='#fcd581'/></linearGradient><radialGradient id='g'><stop offset='0' stop-color='#fff4c9'/><stop offset='1' stop-color='#fff4c9' stop-opacity='0'/></radialGradient></defs><rect width='1000' height='320' fill='url(#s)'/><g fill='#fff' opacity='.7'><circle cx='90' cy='30' r='1.3'/><circle cx='260' cy='60' r='1'/><circle cx='430' cy='24' r='1.4'/><circle cx='590' cy='70' r='1'/><circle cx='700' cy='28' r='1.2'/><circle cx='900' cy='55' r='1.1'/></g><circle cx='740' cy='215' r='120' fill='url(#g)' opacity='.65'/><circle cx='740' cy='215' r='38' fill='#ffe8a8'/><circle cx='832' cy='238' r='22' fill='#ffb27a'/><path d='M0 250 Q200 200 420 245 T1000 235 V320 H0Z' fill='#b9632f'/><path d='M0 285 Q250 240 520 280 T1000 270 V320 H0Z' fill='#7e3a1e'/><path d='M0 312 Q300 282 600 306 T1000 300 V320 H0Z' fill='#3d1a10'/></svg>";
 const HERO_BG={backgroundImage:'url("data:image/svg+xml;utf8,'+encodeURIComponent(SVG)+'")',backgroundSize:'cover',backgroundPosition:'center bottom'};
+
+
+function toMd(html){
+  const doc=new DOMParser().parseFromString(html,"text/html");
+  doc.querySelectorAll("table").forEach(t=>{
+    if(t.querySelector("th"))return;
+    const tr=t.querySelector("tr"); if(!tr)return;
+    [...tr.children].forEach(c=>{const th=doc.createElement("th");th.innerHTML=c.innerHTML;c.replaceWith(th);});
+    const th=doc.createElement("thead");th.appendChild(tr);t.insertBefore(th,t.firstChild);
+  });
+  const td=new TurndownService({headingStyle:"atx",bulletListMarker:"-",codeBlockStyle:"fenced",emDelimiter:"*"});
+  if(window.turndownPluginGfm)td.use(turndownPluginGfm.gfm);
+  return td.turndown(doc.body).replace(/\\\[IMAGEN\\\]/g,"![imagen]()");
+}
+function inl(n){
+  if(n.nodeType===3)return n.nodeValue;
+  if(n.nodeType!==1)return "";
+  const t=n.tagName.toLowerCase(),c=[...n.childNodes].map(inl).join("");
+  if(t==="a"&&n.getAttribute("href")&&c.trim())return c+" ("+n.getAttribute("href")+")";
+  if(t==="br")return "\n";
+  return c;
+}
+function lst(el,d){
+  const ord=el.tagName==="OL";let i=0;const out=[];
+  for(const li of el.children){
+    if(li.tagName!=="LI")continue;i++;
+    const own=[...li.childNodes].filter(x=>!(x.nodeType===1&&/^(UL|OL)$/.test(x.tagName))).map(inl).join("").trim().replace(/\s+/g," ");
+    out.push("  ".repeat(d)+(ord?i+". ":"- ")+own);
+    for(const s of li.children)if(/^(UL|OL)$/.test(s.tagName))out.push(lst(s,d+1));
+  }
+  return out.join("\n");
+}
+function toTxt(html){
+  const doc=new DOMParser().parseFromString(html,"text/html"),out=[];
+  for(const el of doc.body.children){
+    const t=el.tagName;
+    if(/^H[1-6]$/.test(t))out.push(inl(el).trim().toUpperCase());
+    else if(t==="UL"||t==="OL")out.push(lst(el,0));
+    else if(t==="TABLE")out.push([...el.querySelectorAll("tr")].map(r=>[...r.children].map(c=>inl(c).trim().replace(/\s+/g," ")).join(" | ")).join("\n"));
+    else{const x=inl(el).trim();if(x)out.push(x);}
+  }
+  return out.join("\n\n").replace(/\[IMAGEN\]/g,"[imagen]");
+}
 
 function App(){
   const [file,setFile]=useState(null);
@@ -135,15 +180,12 @@ function App(){
     setErr("");setNote("");setMi(0);setPhase("loading");
     const f=fmt;
     try{
-      const sample=await claude.use("sample");
-      if(!sample)throw {message:"La función de IA no está disponible en esta vista."};
-      const res=await sample(mkPrompt(f)+src,{modelTier:"default",cache:false});
-      let t=(res.text||"").trim().replace(/^```(?:markdown|md|text|txt)?\n/,"").replace(/\n```$/,"");
-      if(!t)throw {message:"La IA no devolvió contenido."};
-      if(res.truncated)setNote("El documento es muy largo y la respuesta se cortó. Prueba con un documento más corto o divídelo en partes.");
+      await new Promise(r=>setTimeout(r,1800));
+      const t=(f==="md"?toMd(src):toTxt(src)).trim();
+      if(!t)throw {message:"No se encontró contenido para convertir."};
       setOut(t);setDoneFmt(f);setPhase("done");
     }catch(e){
-      setErr(e&&e.code==="not_granted"?"Necesitas aceptar el permiso para usar la IA.":(e&&e.message)||"Error al generar el archivo.");
+      setErr((e&&e.message)||"Error al convertir el archivo.");
       setPhase("preview");
     }
   }
@@ -151,12 +193,10 @@ function App(){
   const ext=FMT[doneFmt].ext;
   const outName=file?file.name.replace(/\.docx$/i,"")+"."+ext:"documento."+ext;
 
-  async function download(){
-    try{
-      const d=await claude.use("downloads");
-      if(!d){setErr("La descarga no está disponible aquí. Usa «Copiar».");return;}
-      await d.save({filename:outName,data:new Blob([out],{type:ext==="md"?"text/markdown":"text/plain"})});
-    }catch(e){if(!e||e.code!=="declined")setErr("No se pudo descargar: "+((e&&e.message)||"error"));}
+  function download(){
+    const a=document.createElement("a"),u=URL.createObjectURL(new Blob([out],{type:ext==="md"?"text/markdown;charset=utf-8":"text/plain;charset=utf-8"}));
+    a.href=u;a.download=outName;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(u),1000);
   }
   function copy(){navigator.clipboard&&navigator.clipboard.writeText(out).catch(()=>{});}
   function reset(){setFile(null);setPrev("");setSrc("");setOut("");setErr("");setNote("");setPhase("upload");}
@@ -203,7 +243,7 @@ function App(){
         <div class="spin"></div>
         <h2 key=${mi}>${MSGS[mi]}</h2>
         <div class="bar"><i></i></div>
-        <div class="meta">Esto tarda entre 10 y 20 segundos (más si el documento es largo). No cierres la página.</div>
+        <div class="meta">Convirtiendo tu documento, solo tarda unos segundos.</div>
       </div>`}
 
       ${phase==="done"&&html`<div class="card">
